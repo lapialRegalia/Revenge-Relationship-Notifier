@@ -1,0 +1,16 @@
+{
+  "name": "Relationship Notifier",
+  "description": "Alerts for friend, server, group-DM, and watched mutual-relationship changes. Alpha test build.",
+  "authors": [
+    {
+      "name": "lapialRegalia",
+      "id": "0"
+    }
+  ],
+  "main": "index.js",
+  "vendetta": {
+    "icon": "PersonRemoveIcon"
+  },
+  "hash": "development",
+  "version": "0.1.0-alpha.1"
+}
