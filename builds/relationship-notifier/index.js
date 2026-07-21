@@ -2,7 +2,7 @@
     "use strict";
 
     const NAME = "Relationship Notifier";
-    const VERSION = "0.2.0-alpha.1";
+    const VERSION = "0.2.1-alpha.1";
     const STARTUP_DELAY = 10000;
     const BASIC_SCAN_MS = 60 * 60 * 1000;
     const DEFAULT_PRIORITY_HOURS = 2;
@@ -342,41 +342,75 @@
         return null;
     }
 
-    async function fetchProfile(userId) {
-        let result = null;
+    function fetchProfile(userId) {
+        function fromStoreOrNext(next) {
+            var result = readProfileFromStore(userId);
+            return result ? Promise.resolve(result) : next();
+        }
 
-        try {
-            if (UserProfileActions?.fetchProfile) {
-                await UserProfileActions.fetchProfile(userId, { withMutualGuilds: true, with_mutual_guilds: true });
-                await sleep(300);
-                result = readProfileFromStore(userId);
-                if (result) return result;
-            }
-        } catch (e) { logError(`fetchProfile action failed for ${userId}`, e); }
+        function tryFetchProfileAction() {
+            if (!UserProfileActions?.fetchProfile) return tryFetchUserProfileAction();
+            return Promise.resolve(
+                UserProfileActions.fetchProfile(userId, {
+                    withMutualGuilds: true,
+                    with_mutual_guilds: true
+                })
+            ).then(function () {
+                return sleep(300);
+            }).then(function () {
+                return fromStoreOrNext(tryFetchUserProfileAction);
+            }).catch(function (e) {
+                logError(`fetchProfile action failed for ${userId}`, e);
+                return tryFetchUserProfileAction();
+            });
+        }
 
-        try {
-            if (UserProfileActions?.fetchUserProfile) {
-                await UserProfileActions.fetchUserProfile(userId, { withMutualGuilds: true });
-                await sleep(300);
-                result = readProfileFromStore(userId);
-                if (result) return result;
-            }
-        } catch (e) { logError(`fetchUserProfile action failed for ${userId}`, e); }
+        function tryFetchUserProfileAction() {
+            if (!UserProfileActions?.fetchUserProfile) return tryRest();
+            return Promise.resolve(
+                UserProfileActions.fetchUserProfile(userId, {
+                    withMutualGuilds: true
+                })
+            ).then(function () {
+                return sleep(300);
+            }).then(function () {
+                return fromStoreOrNext(tryRest);
+            }).catch(function (e) {
+                logError(`fetchUserProfile action failed for ${userId}`, e);
+                return tryRest();
+            });
+        }
 
-        try {
-            if (RestAPI?.get) {
-                const response = await RestAPI.get({
-                    url: `/users/${userId}/profile`,
-                    query: { with_mutual_guilds: "true", with_mutual_friends: "true" }
-                });
-                const body = response?.body || response;
-                return { raw: body, mutualIds: normalizeMutualFriends(body), source: "rest" };
-            }
-        } catch (e) { logError(`REST profile request failed for ${userId}`, e); }
+        function tryRest() {
+            if (!RestAPI?.get) return finalStoreCheck();
+            return Promise.resolve(RestAPI.get({
+                url: `/users/${userId}/profile`,
+                query: {
+                    with_mutual_guilds: "true",
+                    with_mutual_friends: "true"
+                }
+            })).then(function (response) {
+                var body = response?.body || response;
+                return {
+                    raw: body,
+                    mutualIds: normalizeMutualFriends(body),
+                    source: "rest"
+                };
+            }).catch(function (e) {
+                logError(`REST profile request failed for ${userId}`, e);
+                return finalStoreCheck();
+            });
+        }
 
-        result = readProfileFromStore(userId);
-        if (result) return result;
-        throw new Error("No usable profile-fetch method was found or Discord returned no profile data.");
+        function finalStoreCheck() {
+            var result = readProfileFromStore(userId);
+            if (result) return Promise.resolve(result);
+            return Promise.reject(new Error(
+                "No usable profile-fetch method was found or Discord returned no profile data."
+            ));
+        }
+
+        return tryFetchProfileAction();
     }
 
     function edgeKey(a, b) {
@@ -462,26 +496,38 @@
         touchPerson(userId, "profile-scan");
     }
 
-    async function scanProfiles(ids, reason) {
+    function scanProfiles(ids, reason) {
         const list = uniq(ids);
-        let ok = 0, failed = 0;
-        for (const id of list) {
-            if (stopped) break;
-            try {
-                const profile = await fetchProfile(id);
-                processProfile(id, profile.mutualIds || [], profile.source);
-                ok++;
-            } catch (e) {
-                failed++;
-                data.profiles[id] ??= { userId: id, mutualIds: [] };
-                data.profiles[id].lastError = String(e?.message || e);
-                data.profiles[id].fetchedAt = Date.now();
-                logError(`Profile scan failed for ${id}`, e);
-            }
-            await sleep(PROFILE_REQUEST_GAP);
-        }
-        log(`Profile scan complete (${reason})`, { requested: list.length, ok, failed });
-        return { requested: list.length, ok, failed };
+        let ok = 0;
+        let failed = 0;
+        let chain = Promise.resolve();
+
+        list.forEach(function (id) {
+            chain = chain.then(function () {
+                if (stopped) return null;
+                return fetchProfile(id).then(function (profile) {
+                    processProfile(id, profile.mutualIds || [], profile.source);
+                    ok++;
+                }).catch(function (e) {
+                    failed++;
+                    data.profiles[id] ??= { userId: id, mutualIds: [] };
+                    data.profiles[id].lastError = String(e?.message || e);
+                    data.profiles[id].fetchedAt = Date.now();
+                    logError(`Profile scan failed for ${id}`, e);
+                }).then(function () {
+                    return sleep(PROFILE_REQUEST_GAP);
+                });
+            });
+        });
+
+        return chain.then(function () {
+            log(`Profile scan complete (${reason})`, {
+                requested: list.length,
+                ok,
+                failed
+            });
+            return { requested: list.length, ok, failed };
+        });
     }
 
     function collectGuildMemberIds() {
@@ -533,36 +579,48 @@
         return uniq(ids).filter(id => !priority.has(id) && id !== UserStore?.getCurrentUser?.()?.id);
     }
 
-    async function runPriorityScan(reason) {
+    function runPriorityScan(reason) {
         const ids = getPriorityIds();
-        const result = await scanProfiles(ids, reason);
-        data.lastPriorityScan = Date.now();
-        return result;
+        return scanProfiles(ids, reason).then(function (result) {
+            data.lastPriorityScan = Date.now();
+            return result;
+        });
     }
 
-    async function runRelatedScan(reason) {
+    function runRelatedScan(reason) {
         const all = getRelatedIds();
-        const limit = Math.max(1, Math.min(100, Number(data.settings.relatedBatchLimit) || RELATED_BATCH_LIMIT));
+        const limit = Math.max(
+            1,
+            Math.min(100, Number(data.settings.relatedBatchLimit) || RELATED_BATCH_LIMIT)
+        );
+
         if (!all.length) {
             data.lastRelatedScan = Date.now();
-            return { requested: 0, ok: 0, failed: 0 };
+            return Promise.resolve({ requested: 0, ok: 0, failed: 0 });
         }
+
         const cursor = Number(data.relatedCursor) || 0;
         const batch = [];
         for (let i = 0; i < Math.min(limit, all.length); i++) {
             batch.push(all[(cursor + i) % all.length]);
         }
         data.relatedCursor = (cursor + batch.length) % all.length;
-        const result = await scanProfiles(batch, reason);
-        data.lastRelatedScan = Date.now();
-        return result;
+
+        return scanProfiles(batch, reason).then(function (result) {
+            data.lastRelatedScan = Date.now();
+            return result;
+        });
     }
 
-    async function runFullScan(reason) {
+    function runFullScan(reason) {
         runBasicScan(reason);
-        const priority = await runPriorityScan(`${reason}: priority`);
-        const related = await runRelatedScan(`${reason}: related`);
-        return { priority, related };
+        let priorityResult;
+        return runPriorityScan(`${reason}: priority`).then(function (priority) {
+            priorityResult = priority;
+            return runRelatedScan(`${reason}: related`);
+        }).then(function (related) {
+            return { priority: priorityResult, related };
+        });
     }
 
     function clearSchedules() {
@@ -684,20 +742,21 @@
             rerender();
         }
 
-        async function doScan(kind) {
+        function doScan(kind) {
             setBusy(true);
-            try {
-                let result;
-                if (kind === "full") result = await runFullScan("manual full scan");
-                else if (kind === "priority") result = await runPriorityScan("manual priority scan");
-                else result = await runRelatedScan("manual related scan");
+            let task;
+            if (kind === "full") task = runFullScan("manual full scan");
+            else if (kind === "priority") task = runPriorityScan("manual priority scan");
+            else task = runRelatedScan("manual related scan");
+
+            Promise.resolve(task).then(function (result) {
                 showAlert(NAME, `${kind} scan finished.\n${JSON.stringify(result)}`);
-            } catch (e) {
+            }).catch(function (e) {
                 showAlert(`${NAME} scan failed`, String(e?.message || e));
-            } finally {
+            }).then(function () {
                 setBusy(false);
                 rerender();
-            }
+            });
         }
 
         const recent = (data.history || []).slice(0, 12);
@@ -787,10 +846,13 @@
         subscribeEvents();
         scheduleScans();
 
-        startupTimer = setTimeout(async () => {
+        startupTimer = setTimeout(function () {
             runBasicScan("fresh start");
-            await runPriorityScan("fresh start priority");
-            await runRelatedScan("fresh start related");
+            runPriorityScan("fresh start priority").then(function () {
+                return runRelatedScan("fresh start related");
+            }).catch(function (e) {
+                logError("Fresh-start profile scans failed", e);
+            });
         }, STARTUP_DELAY);
 
         globalThis.RelationshipNotifierDebug = {
