@@ -1,96 +1,63 @@
-/*
- * Revenge Relationship Notifier
- * 0.1.2-alpha.1
- *
- * IMPORTANT: Revenge Classic evaluates this file inside:
- *   (bunny, definePlugin) => { ...; return plugin?.default ?? plugin; }
- *
- * Therefore this file must expose a top-level variable named `plugin`.
- */
-
-var plugin = (function () {
+(function (plugin, metro, common, patcher, pluginApi, components, assets, storageApi) {
     "use strict";
 
-    const PLUGIN = "Relationship Notifier";
-    const VERSION = "0.1.2-alpha.1";
-    const START_DELAY = 10000;
-    const SCAN_INTERVAL = 60000;
-    const CONFIRM_DELAY = 20000;
+    const NAME = "Relationship Notifier";
+    const VERSION = "0.1.3-alpha.1";
+    const STARTUP_SCAN_DELAY_MS = 10000;
+    const PERIODIC_SCAN_MS = 60000;
+    const CONFIRM_REMOVAL_DELAY_MS = 20000;
     const MAX_HISTORY = 500;
 
-    let state;
-    let interval;
-    let startupTimer;
-    let confirmationTimers = new Map();
-    let started = false;
+    const logger = pluginApi.logger;
+    const data = pluginApi.storage;
+
+    let stopped = false;
+    let startupTimer = null;
+    let periodicTimer = null;
+    const confirmationTimers = new Map();
 
     let RelationshipStore;
     let GuildStore;
     let ChannelStore;
     let UserStore;
 
-    const defaults = {
-        initialized: false,
-        friends: {},
-        guilds: {},
-        groupDms: {},
-        pending: {},
-        history: [],
-        settings: {
-            friendAlerts: true,
-            serverAlerts: true,
-            groupDmAlerts: true,
-            startupMessage: true,
-            focusUserIds: [],
-            selectedGuildIds: [],
-            selectedGroupDmIds: [],
-            priorityIntervalHours: 2,
-            relatedIntervalHours: 6
-        },
-        lastScan: 0
-    };
-
     function log(...args) {
-        try { bunny.plugin.logger.log(`[${PLUGIN}]`, ...args); } catch (_) {}
-        try { console.log(`[${PLUGIN}]`, ...args); } catch (_) {}
+        try { logger.log(`[${NAME}]`, ...args); } catch (_) {}
+        try { console.log(`[${NAME}]`, ...args); } catch (_) {}
     }
 
-    function logError(...args) {
-        try { bunny.plugin.logger.error(`[${PLUGIN}]`, ...args); } catch (_) {}
-        try { console.error(`[${PLUGIN}]`, ...args); } catch (_) {}
-    }
-
-    function copyDefaults() {
-        return JSON.parse(JSON.stringify(defaults));
-    }
-
-    function hydrateStorage() {
-        state = bunny.plugin.createStorage();
-
-        if (!state.settings) state.settings = copyDefaults().settings;
-        if (!state.friends) state.friends = {};
-        if (!state.guilds) state.guilds = {};
-        if (!state.groupDms) state.groupDms = {};
-        if (!state.pending) state.pending = {};
-        if (!Array.isArray(state.history)) state.history = [];
-        if (typeof state.initialized !== "boolean") state.initialized = false;
-        if (typeof state.lastScan !== "number") state.lastScan = 0;
+    function error(...args) {
+        try { logger.error(`[${NAME}]`, ...args); } catch (_) {}
+        try { console.error(`[${NAME}]`, ...args); } catch (_) {}
     }
 
     function findByProps(...props) {
         try {
-            if (bunny.metro && typeof bunny.metro.findByProps === "function") {
-                return bunny.metro.findByProps(...props);
-            }
-        } catch (_) {}
+            return metro.findByProps(...props);
+        } catch (_) {
+            return undefined;
+        }
+    }
 
-        try {
-            if (globalThis.vendetta?.metro?.findByProps) {
-                return globalThis.vendetta.metro.findByProps(...props);
-            }
-        } catch (_) {}
+    function initializeStorage() {
+        data.initialized ??= false;
+        data.friends ??= {};
+        data.guilds ??= {};
+        data.groupDms ??= {};
+        data.pending ??= {};
+        data.history ??= [];
+        data.lastScan ??= 0;
 
-        return undefined;
+        data.settings ??= {};
+        data.settings.friendAlerts ??= true;
+        data.settings.serverAlerts ??= true;
+        data.settings.groupDmAlerts ??= true;
+        data.settings.startupMessage ??= true;
+        data.settings.focusUserIds ??= [];
+        data.settings.selectedGuildIds ??= [];
+        data.settings.selectedGroupDmIds ??= [];
+        data.settings.priorityIntervalHours ??= 2;
+        data.settings.relatedIntervalHours ??= 6;
     }
 
     function resolveModules() {
@@ -107,48 +74,50 @@ var plugin = (function () {
         UserStore = findByProps("getUser", "getCurrentUser");
 
         return {
-            relationshipStore: !!RelationshipStore,
-            guildStore: !!GuildStore,
-            channelStore: !!ChannelStore,
-            userStore: !!UserStore
+            friend: Boolean(RelationshipStore),
+            server: Boolean(GuildStore),
+            groupDm: Boolean(ChannelStore),
+            user: Boolean(UserStore)
         };
     }
 
-    function showStartupConfirmation(report) {
-        const status =
-            `Friend monitor: ${report.relationshipStore ? "ready" : "missing"}\n` +
-            `Server monitor: ${report.guildStore ? "ready" : "missing"}\n` +
-            `Group DM monitor: ${report.channelStore ? "ready" : "missing"}`;
-
-        // Most reliable option: React Native Alert from Revenge's exposed metro common API.
+    function showAlert(title, message) {
         try {
-            const Alert = bunny.metro?.common?.ReactNative?.Alert;
+            const Alert = common.ReactNative?.Alert;
             if (Alert?.alert) {
-                Alert.alert(
-                    `${PLUGIN} loaded`,
-                    `Version ${VERSION}\n\n${status}\n\nA baseline scan will run in 10 seconds.`
-                );
-                return;
+                Alert.alert(title, message);
+                return true;
             }
-        } catch (error) {
-            logError("Alert API failed", error);
+        } catch (e) {
+            error("Alert failed", e);
         }
 
-        // Fallback to a Discord/Revenge toast module if available.
         try {
-            const toastModule = findByProps("showToast");
-            if (toastModule?.showToast) {
-                toastModule.showToast(`${PLUGIN} ${VERSION} loaded`);
-                return;
+            const toast = findByProps("showToast");
+            if (toast?.showToast) {
+                toast.showToast(`${title}: ${message}`);
+                return true;
             }
-        } catch (error) {
-            logError("Toast API failed", error);
+        } catch (e) {
+            error("Toast failed", e);
         }
 
-        log("STARTUP CONFIRMATION", VERSION, report);
+        log(title, message);
+        return false;
     }
 
-    function userName(id) {
+    function showStartupConfirmation(modules) {
+        const message =
+            `Version ${VERSION}\n\n` +
+            `Friend monitor: ${modules.friend ? "ready" : "missing"}\n` +
+            `Server monitor: ${modules.server ? "ready" : "missing"}\n` +
+            `Group DM monitor: ${modules.groupDm ? "ready" : "missing"}\n\n` +
+            `The first scan runs in 10 seconds.`;
+
+        showAlert(`${NAME} is running`, message);
+    }
+
+    function getUserName(id) {
         try {
             const user = UserStore?.getUser?.(id);
             return user?.globalName || user?.username || id;
@@ -158,8 +127,8 @@ var plugin = (function () {
     }
 
     function snapshotFriends() {
-        const result = {};
-        if (!RelationshipStore) return result;
+        const output = {};
+        if (!RelationshipStore) return output;
 
         try {
             const relationships =
@@ -169,43 +138,50 @@ var plugin = (function () {
 
             if (Array.isArray(relationships)) {
                 for (const id of relationships) {
-                    result[id] = { id, name: userName(id) };
+                    output[id] = { id, name: getUserName(id) };
                 }
-                return result;
+                return output;
             }
 
-            for (const [id, value] of Object.entries(relationships)) {
-                const type = typeof value === "object" ? value?.type : value;
+            for (const [id, relationship] of Object.entries(relationships)) {
+                const type =
+                    typeof relationship === "object"
+                        ? relationship?.type
+                        : relationship;
+
                 if (type === 1 || type === "FRIEND") {
-                    result[id] = { id, name: userName(id) };
+                    output[id] = { id, name: getUserName(id) };
                 }
             }
-        } catch (error) {
-            logError("Friend snapshot failed", error);
+        } catch (e) {
+            error("Friend snapshot failed", e);
         }
 
-        return result;
+        return output;
     }
 
     function snapshotGuilds() {
-        const result = {};
-        if (!GuildStore) return result;
+        const output = {};
+        if (!GuildStore) return output;
 
         try {
             const guilds = GuildStore.getGuilds?.() || {};
             for (const [id, guild] of Object.entries(guilds)) {
-                result[id] = { id, name: guild?.name || id };
+                output[id] = {
+                    id,
+                    name: guild?.name || id
+                };
             }
-        } catch (error) {
-            logError("Guild snapshot failed", error);
+        } catch (e) {
+            error("Server snapshot failed", e);
         }
 
-        return result;
+        return output;
     }
 
     function snapshotGroupDms() {
-        const result = {};
-        if (!ChannelStore) return result;
+        const output = {};
+        if (!ChannelStore) return output;
 
         try {
             const channels =
@@ -215,44 +191,29 @@ var plugin = (function () {
 
             for (const [id, channel] of Object.entries(channels)) {
                 if (channel?.type !== 3) continue;
-                const names = Array.isArray(channel.recipients)
-                    ? channel.recipients.map(userName)
+
+                const recipients = Array.isArray(channel.recipients)
+                    ? channel.recipients
                     : [];
-                result[id] = {
+
+                output[id] = {
                     id,
-                    name: channel?.name || names.join(", ") || id,
-                    recipients: Array.isArray(channel.recipients) ? channel.recipients : []
+                    name:
+                        channel?.name ||
+                        recipients.map(getUserName).join(", ") ||
+                        id,
+                    recipients
                 };
             }
-        } catch (error) {
-            logError("Group DM snapshot failed", error);
+        } catch (e) {
+            error("Group-DM snapshot failed", e);
         }
 
-        return result;
-    }
-
-    function notify(title, message) {
-        try {
-            const Alert = bunny.metro?.common?.ReactNative?.Alert;
-            if (Alert?.alert) {
-                Alert.alert(title, message);
-                return;
-            }
-        } catch (_) {}
-
-        try {
-            const toastModule = findByProps("showToast");
-            if (toastModule?.showToast) {
-                toastModule.showToast(`${title}: ${message}`);
-                return;
-            }
-        } catch (_) {}
-
-        log("NOTIFICATION", title, message);
+        return output;
     }
 
     function addHistory(type, id, name, detail) {
-        state.history.unshift({
+        data.history.unshift({
             id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
             type,
             subjectId: id,
@@ -260,66 +221,114 @@ var plugin = (function () {
             detail,
             timestamp: Date.now()
         });
-        if (state.history.length > MAX_HISTORY) state.history.length = MAX_HISTORY;
+
+        if (data.history.length > MAX_HISTORY) {
+            data.history.length = MAX_HISTORY;
+        }
     }
 
-    function confirmMissing(kind, id, previousEntry, currentGetter, confirmed) {
+    function notify(title, message) {
+        showAlert(title, message);
+    }
+
+    function confirmMissing(kind, id, priorEntry, currentSnapshot, callback) {
         const key = `${kind}:${id}`;
-        if (confirmationTimers.has(key)) return;
+        if (confirmationTimers.has(key) || stopped) return;
 
         const timer = setTimeout(() => {
             confirmationTimers.delete(key);
+            if (stopped) return;
+
             try {
-                const current = currentGetter();
-                if (!current[id]) confirmed(previousEntry);
-            } catch (error) {
-                logError(`Confirmation failed for ${key}`, error);
+                const current = currentSnapshot();
+                if (!current[id]) callback(priorEntry);
+            } catch (e) {
+                error(`Confirmation failed for ${key}`, e);
             }
-        }, CONFIRM_DELAY);
+        }, CONFIRM_REMOVAL_DELAY_MS);
 
         confirmationTimers.set(key, timer);
     }
 
-    function compareRemoved(previous, current) {
-        if (state.settings.friendAlerts) {
-            for (const [id, oldFriend] of Object.entries(previous.friends || {})) {
+    function compareSnapshots(previous, current) {
+        if (data.settings.friendAlerts) {
+            for (const [id, oldFriend] of Object.entries(previous.friends)) {
                 if (!current.friends[id]) {
-                    confirmMissing("friend", id, oldFriend, snapshotFriends, confirmed => {
-                        notify("Friend removed", `${confirmed.name} is no longer in your friends list.`);
-                        addHistory("friend_removed", id, confirmed.name, "No longer present in friends list.");
-                    });
+                    confirmMissing(
+                        "friend",
+                        id,
+                        oldFriend,
+                        snapshotFriends,
+                        confirmed => {
+                            notify(
+                                "Friend-list change",
+                                `${confirmed.name} is no longer in your friends list.`
+                            );
+                            addHistory(
+                                "friend_removed",
+                                id,
+                                confirmed.name,
+                                "No longer present in the local friends-list snapshot."
+                            );
+                        }
+                    );
                 }
             }
         }
 
-        if (state.settings.serverAlerts) {
-            for (const [id, oldGuild] of Object.entries(previous.guilds || {})) {
+        if (data.settings.serverAlerts) {
+            for (const [id, oldGuild] of Object.entries(previous.guilds)) {
                 if (!current.guilds[id]) {
-                    confirmMissing("guild", id, oldGuild, snapshotGuilds, confirmed => {
-                        notify(
-                            "Server disappeared",
-                            `${confirmed.name} is no longer in your server list. This can mean a kick, ban, server deletion, or temporary access loss.`
-                        );
-                        addHistory("server_removed", id, confirmed.name, "Server disappeared from guild list.");
-                    });
+                    confirmMissing(
+                        "server",
+                        id,
+                        oldGuild,
+                        snapshotGuilds,
+                        confirmed => {
+                            notify(
+                                "Server disappeared",
+                                `${confirmed.name} is no longer in your server list. This does not prove why it disappeared.`
+                            );
+                            addHistory(
+                                "server_removed",
+                                id,
+                                confirmed.name,
+                                "Server disappeared from the local guild snapshot."
+                            );
+                        }
+                    );
                 }
             }
         }
 
-        if (state.settings.groupDmAlerts) {
-            for (const [id, oldGroup] of Object.entries(previous.groupDms || {})) {
+        if (data.settings.groupDmAlerts) {
+            for (const [id, oldGroup] of Object.entries(previous.groupDms)) {
                 if (!current.groupDms[id]) {
-                    confirmMissing("groupdm", id, oldGroup, snapshotGroupDms, confirmed => {
-                        notify("Group DM disappeared", `${confirmed.name} is no longer visible.`);
-                        addHistory("group_dm_removed", id, confirmed.name, "Group DM disappeared.");
-                    });
+                    confirmMissing(
+                        "group-dm",
+                        id,
+                        oldGroup,
+                        snapshotGroupDms,
+                        confirmed => {
+                            notify(
+                                "Group DM disappeared",
+                                `${confirmed.name} is no longer visible.`
+                            );
+                            addHistory(
+                                "group_dm_removed",
+                                id,
+                                confirmed.name,
+                                "Group DM disappeared from the local snapshot."
+                            );
+                        }
+                    );
                 }
             }
         }
     }
 
     function scan(reason) {
-        if (!started) return;
+        if (stopped) return;
 
         try {
             const current = {
@@ -329,79 +338,101 @@ var plugin = (function () {
             };
 
             const previous = {
-                friends: state.friends || {},
-                guilds: state.guilds || {},
-                groupDms: state.groupDms || {}
+                friends: data.friends || {},
+                guilds: data.guilds || {},
+                groupDms: data.groupDms || {}
             };
 
-            if (state.initialized) compareRemoved(previous, current);
+            if (data.initialized) {
+                compareSnapshots(previous, current);
+            }
 
-            state.friends = current.friends;
-            state.guilds = current.guilds;
-            state.groupDms = current.groupDms;
-            state.initialized = true;
-            state.lastScan = Date.now();
+            data.friends = current.friends;
+            data.guilds = current.guilds;
+            data.groupDms = current.groupDms;
+            data.initialized = true;
+            data.lastScan = Date.now();
 
-            log(`Scan complete (${reason})`, {
+            log(`Scan complete: ${reason}`, {
                 friends: Object.keys(current.friends).length,
-                guilds: Object.keys(current.guilds).length,
+                servers: Object.keys(current.guilds).length,
                 groupDms: Object.keys(current.groupDms).length
             });
-        } catch (error) {
-            logError(`Scan failed (${reason})`, error);
+        } catch (e) {
+            error(`Scan failed: ${reason}`, e);
         }
     }
 
     function start() {
-        if (started) return;
-        started = true;
+        initializeStorage();
+        const modules = resolveModules();
 
-        try {
-            hydrateStorage();
-            const report = resolveModules();
+        log("Plugin executed successfully", {
+            version: VERSION,
+            modules
+        });
 
-            log("Plugin started successfully", {
-                version: VERSION,
-                modules: report
-            });
-
-            if (state.settings.startupMessage !== false) {
-                showStartupConfirmation(report);
-            }
-
-            startupTimer = setTimeout(() => scan("fresh start"), START_DELAY);
-            interval = setInterval(() => scan("periodic safety scan"), SCAN_INTERVAL);
-
-            // Debug helpers for this alpha.
-            globalThis.RelationshipNotifierDebug = {
-                version: VERSION,
-                scanNow: () => scan("manual debug"),
-                state: () => state,
-                modules: () => resolveModules(),
-                history: () => state.history,
-                notifyTest: () => notify(PLUGIN, "Manual notification test succeeded.")
-            };
-        } catch (error) {
-            logError("Fatal startup error", error);
-            notify(`${PLUGIN} failed`, String(error?.message || error));
-            throw error;
+        if (data.settings.startupMessage !== false) {
+            showStartupConfirmation(modules);
         }
+
+        startupTimer = setTimeout(
+            () => scan("fresh start"),
+            STARTUP_SCAN_DELAY_MS
+        );
+
+        periodicTimer = setInterval(
+            () => scan("periodic scan"),
+            PERIODIC_SCAN_MS
+        );
+
+        globalThis.RelationshipNotifierDebug = {
+            version: VERSION,
+            scanNow: () => scan("manual debug scan"),
+            testNotification: () =>
+                notify(NAME, "Manual notification test succeeded."),
+            modules: () => resolveModules(),
+            history: () => data.history,
+            storage: () => data
+        };
     }
 
     function stop() {
-        started = false;
-        if (startupTimer) clearTimeout(startupTimer);
-        if (interval) clearInterval(interval);
+        stopped = true;
 
-        for (const timer of confirmationTimers.values()) clearTimeout(timer);
+        if (startupTimer) clearTimeout(startupTimer);
+        if (periodicTimer) clearInterval(periodicTimer);
+
+        for (const timer of confirmationTimers.values()) {
+            clearTimeout(timer);
+        }
         confirmationTimers.clear();
 
-        try { delete globalThis.RelationshipNotifierDebug; } catch (_) {}
-        log("Plugin stopped");
+        try {
+            delete globalThis.RelationshipNotifierDebug;
+        } catch (_) {}
+
+        log("Plugin unloaded");
     }
 
-    return {
-        start,
-        stop
-    };
-})();
+    plugin.onUnload = stop;
+
+    try {
+        start();
+    } catch (e) {
+        error("Fatal startup error", e);
+        showAlert(`${NAME} failed to start`, String(e?.message || e));
+        throw e;
+    }
+
+    return plugin;
+})(
+    {},
+    vendetta.metro,
+    vendetta.metro.common,
+    vendetta.patcher,
+    vendetta.plugin,
+    vendetta.ui.components,
+    vendetta.ui.assets,
+    vendetta.storage
+);

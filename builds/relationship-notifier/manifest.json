@@ -1,16 +1,1 @@
-{
-  "id": "relationship-notifier",
-  "spec": 3,
-  "version": "0.1.2-alpha.1",
-  "type": "plugin",
-  "display": {
-    "name": "Relationship Notifier",
-    "description": "Alerts for friend, server, and group-DM removals, with local history.",
-    "authors": [
-      {
-        "name": "lapialRegalia"
-      }
-    ]
-  },
-  "main": "index.js"
-}
+{"name":"Relationship Notifier","description":"Locally tracks friend-list, server, and group-DM disappearance events and confirms that monitoring starts on each fresh launch.","authors":[{"name":"lapialRegalia"}],"main":"index.js","vendetta":{"icon":"ic_friends_24px"},"hash":"0153f5adf1c59dcda80f7b4d5d0ac0abee07f27ddd85a06f0fed4210eba27aeb"}
