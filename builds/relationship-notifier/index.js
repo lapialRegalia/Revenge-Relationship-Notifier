@@ -1,6 +1,6 @@
 /*
  * Revenge Relationship Notifier
- * 0.1.1-alpha.1
+ * 0.1.2-alpha.1
  *
  * IMPORTANT: Revenge Classic evaluates this file inside:
  *   (bunny, definePlugin) => { ...; return plugin?.default ?? plugin; }
@@ -12,7 +12,7 @@ var plugin = (function () {
     "use strict";
 
     const PLUGIN = "Relationship Notifier";
-    const VERSION = "0.1.1-alpha.1";
+    const VERSION = "0.1.2-alpha.1";
     const START_DELAY = 10000;
     const SCAN_INTERVAL = 60000;
     const CONFIRM_DELAY = 20000;

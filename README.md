@@ -1,57 +1,19 @@
-# Revenge Relationship Notifier
+# Revenge Relationship Notifier — 0.1.2 alpha
 
-An experimental Revenge plugin for local relationship-change alerts.
+This revision fixes the repository index itself.
 
-## Current alpha (`0.1.0-alpha.1`)
+The prior `repo.json` entry was only summary metadata. Revenge treats every
+non-`$` entry as a complete plugin manifest, so this package now publishes the
+complete spec-3 manifest in both `repo.json` and
+`builds/relationship-notifier/manifest.json`.
 
-Implemented:
+It also sets `alwaysFetch: true` in the repository entry during alpha testing so
+Revenge does not keep reusing an older cached script.
 
-- Friend-list disappearance detection
-- Server disappearance detection
-- Group-DM disappearance detection
-- Startup/reconnect snapshots
-- Second-check confirmation to reduce false alerts
-- Local history storage when Revenge's storage API is available
-- Compatibility report for Discord `337.10`
+Replace:
+- `repo.json`
+- `builds/relationship-notifier/manifest.json`
+- `builds/relationship-notifier/index.js`
 
-Scaffolded but **not enabled yet**:
-
-- Focus people
-- Selected servers and group DMs
-- Mutual-friend graph capture
-- Two-hour priority checks
-- Six-hour related-person checks
-- Settings/history user interface
-
-The mutual-friend part needs one on-device compatibility test first because Discord changes the internal mobile profile module frequently.
-
-## Install during testing
-
-After uploading this repository and enabling GitHub Pages, add:
-
-`https://lapialregalia.github.io/Revenge-Relationship-Notifier/`
-
-to Revenge's plugin installer.
-
-## First test
-
-1. Install and enable the plugin.
-2. Fully restart Discord.
-3. Wait about 60 seconds.
-4. Check whether the toast says the alpha loaded.
-5. Open Revenge logs and look for:
-   - `[relationship-notifier] Loaded`
-   - the compatibility object
-6. Send the compatibility object or screenshot back for the next build.
-
-The plugin exposes `globalThis.RelationshipNotifierDebug` for debugging if Revenge's developer console is available.
-
-## Privacy
-
-All snapshots and history are intended to remain local. This repository contains no analytics, webhooks, token collection, or remote database code.
-
-## Important limitations
-
-A disappeared server does not prove whether you were kicked, banned, the server was deleted, or access was temporarily lost. Mutual-friend changes also cannot prove which person initiated a removal.
-
-Client modifications may violate Discord's terms. Use at your own risk.
+Use the repository URL with the final slash:
+https://lapialregalia.github.io/Revenge-Relationship-Notifier/

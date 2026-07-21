@@ -4,13 +4,20 @@
     "description": "Local relationship, server, group-DM, and mutual-relationship change logging for Revenge."
   },
   "relationship-notifier": {
-    "name": "Relationship Notifier",
-    "description": "Alerts when friends, servers, or group DMs disappear. Mutual relationship tracking is being added.",
-    "version": "0.1.1-alpha.1",
-    "authors": [
-      {
-        "name": "lapialRegalia"
-      }
-    ]
+    "id": "relationship-notifier",
+    "spec": 3,
+    "version": "0.1.2-alpha.1",
+    "type": "plugin",
+    "display": {
+      "name": "Relationship Notifier",
+      "description": "Alerts for friend, server, and group-DM removals, with local history.",
+      "authors": [
+        {
+          "name": "lapialRegalia"
+        }
+      ]
+    },
+    "main": "index.js",
+    "alwaysFetch": true
   }
 }
