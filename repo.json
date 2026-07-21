@@ -1,26 +1,16 @@
 {
-  "name": "Revenge Relationship Notifier",
-  "description": "Local relationship, server, group-DM, and mutual-relationship change logging for Revenge.",
-  "authors": [
-    {
-      "name": "lapialRegalia",
-      "id": "0"
-    }
-  ],
-  "plugins": {
-    "relationship-notifier": {
-      "name": "Relationship Notifier",
-      "description": "Alerts when friends, servers, group DMs, or watched mutual relationships disappear.",
-      "authors": [
-        {
-          "name": "lapialRegalia",
-          "id": "0"
-        }
-      ],
-      "version": "0.1.0-alpha.1",
-      "vendetta": {
-        "icon": "PersonRemoveIcon"
+  "$meta": {
+    "name": "Revenge Relationship Notifier",
+    "description": "Local relationship, server, group-DM, and mutual-relationship change logging for Revenge."
+  },
+  "relationship-notifier": {
+    "name": "Relationship Notifier",
+    "description": "Alerts when friends, servers, or group DMs disappear. Mutual relationship tracking is being added.",
+    "version": "0.1.1-alpha.1",
+    "authors": [
+      {
+        "name": "lapialRegalia"
       }
-    }
+    ]
   }
 }

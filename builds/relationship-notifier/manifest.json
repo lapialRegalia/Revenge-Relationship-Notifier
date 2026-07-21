@@ -1,0 +1,16 @@
+{
+  "id": "relationship-notifier",
+  "spec": 3,
+  "version": "0.1.1-alpha.1",
+  "type": "plugin",
+  "display": {
+    "name": "Relationship Notifier",
+    "description": "Alerts for friend, server, and group-DM removals, with local history.",
+    "authors": [
+      {
+        "name": "lapialRegalia"
+      }
+    ]
+  },
+  "main": "index.js"
+}
